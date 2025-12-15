@@ -1,194 +1,196 @@
 /// Schema Block Visitor for InstantDB Schema Generator
 ///
 /// Parses the `InstantSchema { }` block to extract:
-/// - Which entities are used in the schema
-/// - Attribute configurations (.indexed(), .unique(), .optional())
-/// - Link definitions between entities
+/// - Entity definitions with Entity("name").field(...)
+/// - Link definitions with Link("from", "label").to(...)
 
 import SwiftSyntax
 
-/// Visits the InstantSchema DSL block to extract configurations and links.
+/// Visits the InstantSchema DSL block to extract entities and links.
 class SchemaBlockVisitor: SyntaxVisitor {
-  /// All available entity definitions from @InstantEntity structs
-  private let allEntities: [String: EntitySchema]
-
-  /// Only entities referenced in the schema block (via Entity(X.self))
+  /// Entities found in the schema block
   var entities: [String: EntitySchema] = [:]
-
-  /// Extracted link definitions
+  
+  /// Links found in the schema block
   var links: [String: LinkSchema] = [:]
-
-  /// Maps Swift type names to entity namespace names
-  let entityTypeToName: [String: String]
-
-  /// Tracks which Entity block we're currently inside
-  private var currentEntityType: String?
-
-  /// Prevents processing the same link node multiple times
-  private var processedLinkNodes: Set<String> = []
-
-  init(
-    viewMode: SyntaxTreeViewMode,
-    entities: [String: EntitySchema],
-    entityTypeToName: [String: String]
-  ) {
-    self.allEntities = entities
-    self.entityTypeToName = entityTypeToName
-    super.init(viewMode: viewMode)
-  }
-
+  
+  /// Track processed nodes to avoid duplicates
+  private var processedNodes: Set<Int> = []
+  
   override func visit(_ node: FunctionCallExprSyntax) -> SyntaxVisitorContinueKind {
-    handleEntityCall(node)
-    handleAttributeModifiers(node)
-    handleLinkCall(node)
+    if let entity = parseEntityChain(node) {
+      entities[entity.name] = entity
+    }
+    
+    if let link = parseLinkChain(node) {
+      links[link.name] = link
+    }
+    
     return .visitChildren
   }
+}
 
-  override func visitPost(_ node: FunctionCallExprSyntax) {
-    if let identifier = node.calledExpression.as(DeclReferenceExprSyntax.self),
-       identifier.baseName.text == "Entity" {
-      currentEntityType = nil
+// MARK: - Entity Parsing
+
+extension SchemaBlockVisitor {
+  private func parseEntityChain(_ node: FunctionCallExprSyntax) -> EntitySchema? {
+    var currentNode: FunctionCallExprSyntax? = node
+    var fields: [(name: String, type: String, isRequired: Bool, isIndexed: Bool, isUnique: Bool)] = []
+    var entityName: String?
+    
+    while let funcCall = currentNode {
+      let nodeId = funcCall.position.utf8Offset
+      if processedNodes.contains(nodeId) {
+        return nil
+      }
+      
+      if let memberAccess = funcCall.calledExpression.as(MemberAccessExprSyntax.self) {
+        let methodName = memberAccess.declName.baseName.text
+        
+        if methodName == "field" || methodName == "optionalField" {
+          if let fieldInfo = parseFieldCall(funcCall, isOptional: methodName == "optionalField") {
+            fields.insert(fieldInfo, at: 0)
+          }
+        }
+        
+        /// Move up the chain
+        if let base = memberAccess.base?.as(FunctionCallExprSyntax.self) {
+          currentNode = base
+        } else {
+          currentNode = nil
+        }
+      } else if let declRef = funcCall.calledExpression.as(DeclReferenceExprSyntax.self),
+                declRef.baseName.text == "Entity" {
+        /// Found the root Entity("name") call
+        entityName = parseStringArgument(funcCall)
+        processedNodes.insert(funcCall.position.utf8Offset)
+        break
+      } else {
+        currentNode = nil
+      }
     }
-  }
-
-  /// Handles `Entity(Goal.self) { ... }` - adds entity to used entities
-  private func handleEntityCall(_ node: FunctionCallExprSyntax) {
-    guard let identifier = node.calledExpression.as(DeclReferenceExprSyntax.self),
-          identifier.baseName.text == "Entity",
-          let firstArg = node.arguments.first,
-          let memberAccess = firstArg.expression.as(MemberAccessExprSyntax.self),
-          memberAccess.declName.baseName.text == "self" else {
-      return
+    
+    guard let name = entityName, !fields.isEmpty else {
+      return nil
     }
-
-    let typeName = memberAccess.base?.description.trimmingCharacters(in: .whitespaces) ?? ""
-    currentEntityType = typeName
-
-    // Add this entity to used entities
-    if let entityName = entityTypeToName[typeName],
-       let entity = allEntities[entityName] {
-      entities[entityName] = entity
-    }
-  }
-
-  /// Handles `.indexed()`, `.unique()`, `.optional()` modifier calls
-  private func handleAttributeModifiers(_ node: FunctionCallExprSyntax) {
-    guard let memberAccess = node.calledExpression.as(MemberAccessExprSyntax.self) else {
-      return
-    }
-
-    let methodName = memberAccess.declName.baseName.text
-
-    guard methodName == "indexed" || methodName == "unique" || methodName == "optional",
-          let attrName = extractAttrName(from: memberAccess.base),
-          let entityType = currentEntityType,
-          let entityName = entityTypeToName[entityType],
-          var entity = entities[entityName],
-          var attr = entity.attrs[attrName] else {
-      return
-    }
-
-    if methodName == "indexed" {
-      attr.config.indexed = true
-    }
-    if methodName == "unique" {
-      attr.config.unique = true
-      attr.config.indexed = true
-    }
-    if methodName == "optional" {
-      attr.required = nil
-    }
-
-    entity.attrs[attrName] = attr
-    entities[entityName] = entity
-  }
-
-  /// Handles `.to(Entity.self, "label")` calls to create links
-  private func handleLinkCall(_ node: FunctionCallExprSyntax) {
-    guard let memberAccess = node.calledExpression.as(MemberAccessExprSyntax.self),
-          memberAccess.declName.baseName.text == "to" else {
-      return
-    }
-
-    let nodeId = "\(node.position.utf8Offset)"
-    guard !processedLinkNodes.contains(nodeId) else { return }
-    processedLinkNodes.insert(nodeId)
-
-    guard let linkInfo = extractFullLinkChain(from: node),
-          let fromEntityName = entityTypeToName[linkInfo.fromType],
-          let toEntityName = entityTypeToName[linkInfo.toType] else {
-      return
-    }
-
-    let linkName = "\(fromEntityName)_\(linkInfo.forwardLabel)"
-    links[linkName] = LinkSchema(
-      name: linkName,
-      forward: LinkEndpointSchema(
-        on: fromEntityName,
-        has: linkInfo.cardinality,
-        label: linkInfo.forwardLabel
-      ),
-      reverse: LinkEndpointSchema(
-        on: toEntityName,
-        has: linkInfo.cardinality == "many" ? "one" : "many",
-        label: linkInfo.reverseLabel
+    
+    /// Mark all nodes as processed
+    processedNodes.insert(node.position.utf8Offset)
+    
+    /// Build entity schema
+    var attrs: [String: AttributeSchema] = [:]
+    for field in fields {
+      attrs[field.name] = AttributeSchema(
+        valueType: field.type,
+        config: AttributeConfig(
+          indexed: field.isIndexed,
+          unique: field.isUnique
+        ),
+        required: field.isRequired ? true : nil
       )
+    }
+    
+    return EntitySchema(name: name, typeName: name, attrs: attrs)
+  }
+  
+  /// Parses .field("name", .type, .constraint, ...) calls
+  private func parseFieldCall(_ node: FunctionCallExprSyntax, isOptional: Bool) -> (name: String, type: String, isRequired: Bool, isIndexed: Bool, isUnique: Bool)? {
+    var fieldName: String?
+    var fieldType: String = "any"
+    var isIndexed = false
+    var isUnique = false
+    
+    for (index, arg) in node.arguments.enumerated() {
+      if index == 0 {
+        /// First arg: field name
+        fieldName = parseStringLiteral(arg.expression)
+      } else if index == 1 {
+        /// Second arg: data type (.string, .number, etc.)
+        if let memberAccess = arg.expression.as(MemberAccessExprSyntax.self) {
+          fieldType = memberAccess.declName.baseName.text
+        }
+      } else {
+        /// Remaining args: constraints (.indexed, .unique, .required)
+        if let memberAccess = arg.expression.as(MemberAccessExprSyntax.self) {
+          let constraint = memberAccess.declName.baseName.text
+          if constraint == "indexed" {
+            isIndexed = true
+          } else if constraint == "unique" {
+            isUnique = true
+            isIndexed = true // unique implies indexed
+          }
+        }
+      }
+    }
+    
+    guard let name = fieldName else { return nil }
+    
+    return (
+      name: name,
+      type: fieldType,
+      isRequired: !isOptional,
+      isIndexed: isIndexed,
+      isUnique: isUnique
     )
   }
 }
 
-// MARK: - Link Extraction
+// MARK: - Link Parsing
 
 extension SchemaBlockVisitor {
-  struct LinkInfo {
-    var fromType: String
-    var forwardLabel: String
-    var cardinality: String
-    var toType: String
-    var reverseLabel: String
-  }
-
-  private func extractFullLinkChain(from node: FunctionCallExprSyntax) -> LinkInfo? {
-    var toType: String?
+  /// Parses Link("from", "label").hasMany().to("entity", "label") chains
+  private func parseLinkChain(_ node: FunctionCallExprSyntax) -> LinkSchema? {
+    // Only process .to() calls (the end of the chain)
+    guard let memberAccess = node.calledExpression.as(MemberAccessExprSyntax.self),
+          memberAccess.declName.baseName.text == "to" else {
+      return nil
+    }
+    
+    let nodeId = node.position.utf8Offset
+    guard !processedNodes.contains(nodeId) else { return nil }
+    processedNodes.insert(nodeId)
+    
+    // Extract .to() arguments
+    var toEntity: String?
     var reverseLabel: String?
-    var cardinality = "many"
-    var fromType: String?
-    var forwardLabel: String?
-
-    for arg in node.arguments {
-      if arg.label == nil {
-        if let argMemberAccess = arg.expression.as(MemberAccessExprSyntax.self),
-           argMemberAccess.declName.baseName.text == "self" {
-          toType = argMemberAccess.base?.description.trimmingCharacters(in: .whitespaces)
-        } else if let stringLiteral = arg.expression.as(StringLiteralExprSyntax.self),
-                  let segment = stringLiteral.segments.first?.as(StringSegmentSyntax.self) {
-          reverseLabel = segment.content.text
-        }
+    var reverseCardinality = "one"
+    
+    for (index, arg) in node.arguments.enumerated() {
+      if index == 0 {
+        toEntity = parseStringLiteral(arg.expression)
+      } else if index == 1 {
+        reverseLabel = parseStringLiteral(arg.expression)
       }
     }
-
-    var currentExpr: ExprSyntax? = node.calledExpression.as(MemberAccessExprSyntax.self)?.base
+    
+    // Walk up the chain to find Link() call and modifiers
+    var fromEntity: String?
+    var forwardLabel: String?
+    var forwardCardinality = "many"
+    
+    var currentExpr: ExprSyntax? = memberAccess.base
     while let expr = currentExpr {
       if let funcCall = expr.as(FunctionCallExprSyntax.self) {
-        if let memberAccess = funcCall.calledExpression.as(MemberAccessExprSyntax.self) {
-          let methodName = memberAccess.declName.baseName.text
+        if let innerMember = funcCall.calledExpression.as(MemberAccessExprSyntax.self) {
+          let methodName = innerMember.declName.baseName.text
           if methodName == "hasMany" {
-            cardinality = "many"
+            forwardCardinality = "many"
           } else if methodName == "hasOne" {
-            cardinality = "one"
+            forwardCardinality = "one"
+          } else if methodName == "reverseHasMany" {
+            reverseCardinality = "many"
+          } else if methodName == "reverseHasOne" {
+            reverseCardinality = "one"
           }
-          currentExpr = memberAccess.base
+          currentExpr = innerMember.base
         } else if let declRef = funcCall.calledExpression.as(DeclReferenceExprSyntax.self),
                   declRef.baseName.text == "Link" {
-          for arg in funcCall.arguments {
-            if arg.label?.text == "from",
-               let memberAccess = arg.expression.as(MemberAccessExprSyntax.self),
-               memberAccess.declName.baseName.text == "self" {
-              fromType = memberAccess.base?.description.trimmingCharacters(in: .whitespaces)
-            } else if arg.label == nil,
-                      let stringLiteral = arg.expression.as(StringLiteralExprSyntax.self),
-                      let segment = stringLiteral.segments.first?.as(StringSegmentSyntax.self) {
-              forwardLabel = segment.content.text
+          // Found the root Link("from", "label") call
+          for (index, arg) in funcCall.arguments.enumerated() {
+            if index == 0 {
+              fromEntity = parseStringLiteral(arg.expression)
+            } else if index == 1 {
+              forwardLabel = parseStringLiteral(arg.expression)
             }
           }
           break
@@ -199,54 +201,45 @@ extension SchemaBlockVisitor {
         break
       }
     }
-
-    guard let from = fromType,
-          let fwd = forwardLabel,
-          let to = toType,
-          let rev = reverseLabel else {
+    
+    guard let from = fromEntity,
+          let fwdLabel = forwardLabel,
+          let to = toEntity,
+          let revLabel = reverseLabel else {
       return nil
     }
-
-    return LinkInfo(
-      fromType: from,
-      forwardLabel: fwd,
-      cardinality: cardinality,
-      toType: to,
-      reverseLabel: rev
+    
+    let linkName = "\(from)\(fwdLabel.capitalized)"
+    
+    return LinkSchema(
+      name: linkName,
+      forward: LinkEndpointSchema(
+        on: from,
+        has: forwardCardinality,
+        label: fwdLabel
+      ),
+      reverse: LinkEndpointSchema(
+        on: to,
+        has: reverseCardinality,
+        label: revLabel
+      )
     )
   }
 }
 
-// MARK: - Attribute Name Extraction
+// MARK: - Helpers
 
 extension SchemaBlockVisitor {
-  private func extractAttrName(from expr: ExprSyntax?) -> String? {
-    guard let expr = expr else { return nil }
-
-    if let funcCall = expr.as(FunctionCallExprSyntax.self) {
-      if let identifier = funcCall.calledExpression.as(DeclReferenceExprSyntax.self),
-         identifier.baseName.text == "Attr" {
-        return extractKeyPathPropertyName(from: funcCall)
-      }
-      if let memberAccess = funcCall.calledExpression.as(MemberAccessExprSyntax.self) {
-        return extractAttrName(from: memberAccess.base)
-      }
-    }
-
-    if let memberAccess = expr.as(MemberAccessExprSyntax.self) {
-      return extractAttrName(from: memberAccess.base)
-    }
-
-    return nil
+  private func parseStringArgument(_ node: FunctionCallExprSyntax) -> String? {
+    guard let firstArg = node.arguments.first else { return nil }
+    return parseStringLiteral(firstArg.expression)
   }
-
-  private func extractKeyPathPropertyName(from funcCall: FunctionCallExprSyntax) -> String? {
-    guard let firstArg = funcCall.arguments.first,
-          let keyPath = firstArg.expression.as(KeyPathExprSyntax.self),
-          let component = keyPath.components.first,
-          let propertyComponent = component.component.as(KeyPathPropertyComponentSyntax.self) else {
+  
+  private func parseStringLiteral(_ expr: ExprSyntax) -> String? {
+    guard let stringLiteral = expr.as(StringLiteralExprSyntax.self),
+          let segment = stringLiteral.segments.first?.as(StringSegmentSyntax.self) else {
       return nil
     }
-    return propertyComponent.declName.baseName.text
+    return segment.content.text
   }
 }
