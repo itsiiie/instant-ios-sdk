@@ -9,7 +9,7 @@ public struct TypedEntity<E: InstantEntitySchema>: Sendable {
         self.attributeConfigs = configs()
     }
 
-    public func toSchemaEntity() -> SchemaEntity {
+    public func toSchemaEntity() -> SchemaEntityDef {
         var configMap: [String: TypedAttributeConfig] = [:]
         for config in attributeConfigs {
             configMap[config.name] = config
@@ -33,7 +33,7 @@ public struct TypedEntity<E: InstantEntitySchema>: Sendable {
             }
         }
 
-        return SchemaEntity(E.namespace, attributes: attributes)
+        return SchemaEntityDef(E.namespace, attributes: attributes)
     }
 }
 
@@ -194,7 +194,10 @@ public func Link<From: InstantEntitySchema, To: InstantEntitySchema>(
     TypedLinkBuilder(from: from, label)
 }
 
-public func Entity<E: InstantEntitySchema>(
+/// Create a typed entity from a model conforming to InstantEntitySchema
+/// - Note: For simpler API, use `Entity("name")` builder instead
+@available(*, deprecated, message: "Use Entity(\"name\") builder for simpler API")
+public func TypedEntityFrom<E: InstantEntitySchema>(
     _ type: E.Type,
     @TypedAttributeBuilder configs: () -> [TypedAttributeConfig] = { [] }
 ) -> TypedEntity<E> {

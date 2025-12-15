@@ -18,7 +18,7 @@ public struct SchemaSerializer {
   public static func toDictionary(_ schema: InstantSchema) -> [String: Any] {
     var entities: [String: Any] = [:]
 
-    for entity in schema.entities {
+    for entity: SchemaEntityDef in schema.entities {
       var attrs: [String: Any] = [:]
       for attr in entity.attributes {
         attrs[attr.name] = attributeToDictionary(attr)
