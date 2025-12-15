@@ -7,7 +7,7 @@ A Swift SDK for [InstantDB](https://instantdb.com) - build real-time application
 ## Installation
 
 ```swift
-.package(url: "https://github.com/instantdb/instant-ios-sdk", from: "0.1.0")
+.package(url: "https://github.com/instantdb/instant-ios-sdk", from: "0.1.2")
 ```
 
 ## Setup
@@ -99,27 +99,65 @@ try await db.authManager.signInAsGuest()
 try await db.authManager.signOut()
 ```
 
+## Schema Definition
+
+Define your schema using the Swift
+
+```swift
+// instant.schema.swift
+import InstantDB
+
+let schema = InstantSchema {
+    Entity("users")
+        .field("email", .string, .unique, .indexed)
+        .field("name", .string)
+        .optionalField("bio", .string)
+
+    Entity("posts")
+        .field("title", .string, .indexed)
+        .field("content", .string)
+        .field("createdAt", .date)
+
+    Link("users", "posts")
+        .hasMany()
+        .to("posts", "author")
+}
+```
+
+Generate JSON and push to InstantDB:
+
+```bash
+# Generate instant.schema.json from Swift
+instant-schema generate
+
+# Preview changes
+instant-schema plan --app-id <id> --token <admin token>
+
+# Push schema
+instant-schema push --app-id <id> --token <admin token>
+
+```
+
 ## Limitations
 
 - No offline mode
 - No optimistic updates
-- No local storage
-- Can not define database schema
+- No storage API
 - No permission management
 
 ## Roadmap
 
 ### Query Enhancements
-- [ ] Cursor-based pagination (`first`, `last`, `after`, `before`)
+- [x] Cursor-based pagination (`first`, `last`, `after`, `before`)
 - [ ] Advanced where operators (`$in`, `$like`, `$isNull`, `and`/`or`)
-- [ ] Ordering/sorting by indexed fields
+- [x] Ordering/sorting by indexed fields
 - [ ] Field projection (select specific attributes)
 - [ ] Nested queries on linked entities
 - [ ] `queryOnce()` for one-time reads
 
 ### Schema & Tooling
-- [ ] Schema definition DSL in Swift
-- [ ] CLI tool or Swift script to deploy schema via Platform API
+- [x] Schema definition DSL in Swift
+- [x] CLI tool to deploy schema via Platform API
 - [ ] Type generation from schema
 - [ ] Query/transaction validation against schema
 
