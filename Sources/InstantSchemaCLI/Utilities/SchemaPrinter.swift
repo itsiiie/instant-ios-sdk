@@ -20,7 +20,7 @@ enum SchemaPrinter {
         }
       }
     }
-
+    
     if let links = schema["links"] as? [String: Any], !links.isEmpty {
       Swift.print("\nLinks:")
       for (name, linkConfig) in links.sorted(by: { $0.key < $1.key }) {
