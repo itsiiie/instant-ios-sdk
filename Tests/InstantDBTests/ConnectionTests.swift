@@ -3,7 +3,6 @@ import XCTest
 
 @MainActor
 final class ConnectionTests: XCTestCase {
-  
   func testConnectionStateInitiallyDisconnected() {
     let appID = "00000000-0000-0000-0000-000000000000"
     let client = InstantClient(appID: appID)
