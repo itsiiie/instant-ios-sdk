@@ -1,25 +1,62 @@
 //
-//  insant.swift
+//  instant.schema.swift
 //  instantdb-example
-//
-//  Created by Tornike Gomareli on 09.12.25.
 //
 
 import InstantDB
 
 let schema = InstantSchema {
-  Entity(Goal.self) {
-    Attr(\Goal.title).indexed().optional()
-    Attr(\Goal.difficulty).optional()
-    Attr(\Goal.completed).optional()
-  }
+  Entity("profiles")
+    .field("username", .string, .unique, .indexed)
+    .field("displayName", .string)
+    .optionalField("bio", .string)
+    .optionalField("avatarUrl", .string)
+    .field("createdAt", .date)
   
-  Entity(User.self) {
-    Attr(\User.email).indexed().unique()
-    Attr(\User.name)
-  }
+  Entity("posts")
+    .field("content", .string)
+    .optionalField("imageUrl", .string)
+    .field("createdAt", .date, .indexed)
+    .field("likesCount", .number)
   
-  Link(from: User.self, "goals")
+  Entity("comments")
+    .field("text", .string)
+    .field("createdAt", .date)
+  
+  Entity("messages")
+    .field("text", .string)
+    .field("createdAt", .date, .indexed)
+    .field("isRead", .boolean)
+  
+  Entity("friendships")
+    .field("status", .string, .indexed)
+    .field("createdAt", .date)
+  
+  Link("profiles", "posts")
     .hasMany()
-    .to(Goal.self, "owner")
+    .to("posts", "author")
+  
+  Link("profiles", "comments")
+    .hasMany()
+    .to("comments", "author")
+  
+  Link("posts", "comments")
+    .hasMany()
+    .to("comments", "post")
+  
+  Link("profiles", "sentMessages")
+    .hasMany()
+    .to("messages", "sender")
+  
+  Link("profiles", "receivedMessages")
+    .hasMany()
+    .to("messages", "recipient")
+  
+  Link("profiles", "friendshipsInitiated")
+    .hasMany()
+    .to("friendships", "requester")
+  
+  Link("profiles", "friendshipsReceived")
+    .hasMany()
+    .to("friendships", "addressee")
 }
