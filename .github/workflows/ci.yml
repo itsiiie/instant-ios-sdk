@@ -13,6 +13,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Run basic CI check
-        run: |
-          echo "CI pipeline is running successfully"
+      - name: Build Swift package
+        run: swift build -v
+
+      - name: Run tests
+        run: swift test -v
