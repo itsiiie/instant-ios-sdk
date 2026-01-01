@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, ci-basic-github-actions]
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
 
 jobs:
   build-and-test:
@@ -21,8 +21,17 @@ jobs:
       - name: Show Swift version
         run: swift --version
 
+      - name: Resolve dependencies
+        run: swift package resolve
+
       - name: Build package
         run: swift build -v
 
       - name: Run tests
-        run: swift test -v
+        run: swift test -v --parallel
+
+      - name: Test Summary
+        if: always()
+        run: |
+          echo "✅ Build completed"
+          echo "📊 Check test results above for details"
