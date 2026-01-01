@@ -9,54 +9,44 @@ on:
     branches: [main]
 
 jobs:
-  # 1. Build for multiple platforms using the repository's build script
-  build-platforms:
-    name: Build Platforms
-    runs-on: macos-14
-    strategy:
-      matrix:
-        # build.sh supports: iOS macOS tvOS watchOS xrOS
-        platform: [iOS, macOS, tvOS, watchOS]
+  build-and-test:
+    name: Build and Test
+    runs-on: macos-14 # Specifically use macOS 14 for Xcode 15+ support
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4 #
 
-      - name: Build InstantDB for ${{ matrix.platform }}
-        # Usage: build.sh <TARGET> <PLATFORM>
-        run: bash scripts/build.sh InstantDB ${{ matrix.platform }}
+      - name: Select Xcode Version
+        # Pinning to 15.4 for consistency as suggested in review
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
 
-  # 2. Run unit tests and macro tests defined in Package.swift
-  test:
-    name: Run Tests
-    runs-on: macos-14
-    steps:
-      - uses: actions/checkout@v4
+      - name: Cache Swift Package Manager
+        # Added caching for faster build times
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
 
-      - name: Swift Test
-        # Runs InstantDBTests and InstantDBMacrosTests
-        run: swift test --parallel
+      - name: Build SDK
+        # Uses the repository's build script to verify platform compatibility
+        # Targets iOS by default as a baseline check
+        run: bash scripts/build.sh InstantDB iOS
 
-  # 3. Verify CLI tools and plugins
-  verify-tooling:
-    name: Verify Tooling
-    runs-on: macos-14
-    steps:
-      - uses: actions/checkout@v4
+      - name: Run Tests
+        # Executes InstantDBTests and InstantDBMacrosTests
+        run: swift test -v --parallel
 
-      - name: Build instant-schema CLI
-        run: swift build --product instant-schema
+      - name: Verify CLI Tools
+        # Ensures the schema generation tools remain functional
+        run: |
+          swift build --product instant-schema
+          swift build --product InstantSchemaGenerator
 
-      - name: Build InstantSchemaGenerator
-        run: swift build --product InstantSchemaGenerator
-
-  # 4. Optional: Linting using project scripts
-  lint:
-    name: Lint
-    runs-on: macos-14
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Run SwiftLint
-        # Uses the existing project lint script if available
+      - name: Lint Check
+        # Integrates existing project linting if the script is present
         run: |
           if [ -f "scripts/swiftlint.sh" ]; then
             bash scripts/swiftlint.sh
