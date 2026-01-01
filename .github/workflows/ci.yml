@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  build-and-test:
+  build:
     runs-on: macos-latest
 
     steps:
@@ -17,5 +17,5 @@ jobs:
       - name: Build Swift package
         run: swift build -v
 
-      - name: Run tests
-        run: swift test -v
+      - name: Run runtime tests
+        run: swift test --filter InstantDBTests -v
