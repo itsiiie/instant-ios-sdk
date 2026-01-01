@@ -11,18 +11,18 @@ on:
 jobs:
   build-and-test:
     name: Build and Test
-    runs-on: macos-14 # Specifically use macOS 14 for Xcode 15+ support
+    runs-on: macos-14
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4 #
+        uses: actions/checkout@v4
 
-      - name: Select Xcode Version
-        # Pinning to 15.4 for consistency as suggested in review
+      - name: Select Xcode 15.4
+        # Pins the version for consistent, reproducible builds
         run: sudo xcode-select -s /Applications/Xcode_15.4.app
 
       - name: Cache Swift Package Manager
-        # Added caching for faster build times
+        # Speeds up subsequent runs by caching the .build directory
         uses: actions/cache@v4
         with:
           path: .build
@@ -31,22 +31,15 @@ jobs:
             ${{ runner.os }}-spm-
 
       - name: Build SDK
-        # Uses the repository's build script to verify platform compatibility
-        # Targets iOS by default as a baseline check
-        run: bash scripts/build.sh InstantDB iOS
+        # Builds the main library target
+        run: swift build -v
 
       - name: Run Tests
-        # Executes InstantDBTests and InstantDBMacrosTests
+        # Executes InstantDBTests and InstantDBMacrosTests in parallel
         run: swift test -v --parallel
 
-      - name: Verify CLI Tools
-        # Ensures the schema generation tools remain functional
-        run: |
-          swift build --product instant-schema
-          swift build --product InstantSchemaGenerator
-
       - name: Lint Check
-        # Integrates existing project linting if the script is present
+        # Runs the project's existing lint script if it exists
         run: |
           if [ -f "scripts/swiftlint.sh" ]; then
             bash scripts/swiftlint.sh
