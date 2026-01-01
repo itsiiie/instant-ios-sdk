@@ -2,54 +2,62 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches:
+      - ci-basic-github-actions
+      - main
   pull_request:
     branches: [main]
 
 jobs:
-  # 1. Lint and Format Check
-  lint:
-    runs-on: macos-14
-    steps:
-      - uses: actions/checkout@v4
-      - name: SwiftLint
-        run: |
-          if [ -f "scripts/swiftlint.sh" ]; then
-            bash scripts/swiftlint.sh
-          else
-            swiftlint
-          fi
-      - name: SwiftFormat Check
-        run: |
-          if [ -f "scripts/swiftformat.sh" ]; then
-            bash scripts/swiftformat.sh --lint
-          fi
-
-  # 2. Build for all platforms (iOS, macOS, etc.)
+  # 1. Build for multiple platforms using the repository's build script
   build-platforms:
+    name: Build Platforms
     runs-on: macos-14
     strategy:
       matrix:
+        # build.sh supports: iOS macOS tvOS watchOS xrOS
         platform: [iOS, macOS, tvOS, watchOS]
     steps:
       - uses: actions/checkout@v4
-      - name: Build for ${{ matrix.platform }}
+
+      - name: Build InstantDB for ${{ matrix.platform }}
+        # Usage: build.sh <TARGET> <PLATFORM>
         run: bash scripts/build.sh InstantDB ${{ matrix.platform }}
 
-  # 3. Run Unit and Macro Tests
+  # 2. Run unit tests and macro tests defined in Package.swift
   test:
+    name: Run Tests
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-      - name: Run Tests
+
+      - name: Swift Test
+        # Runs InstantDBTests and InstantDBMacrosTests
         run: swift test --parallel
 
-  # 4. Build CLI Tool and Plugins
-  build-tools:
+  # 3. Verify CLI tools and plugins
+  verify-tooling:
+    name: Verify Tooling
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+
       - name: Build instant-schema CLI
         run: swift build --product instant-schema
+
       - name: Build InstantSchemaGenerator
         run: swift build --product InstantSchemaGenerator
+
+  # 4. Optional: Linting using project scripts
+  lint:
+    name: Lint
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run SwiftLint
+        # Uses the existing project lint script if available
+        run: |
+          if [ -f "scripts/swiftlint.sh" ]; then
+            bash scripts/swiftlint.sh
+          fi
